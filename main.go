@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
-
-	"github.com/codemodus/mixmux"
 )
 
 type options struct {
@@ -18,43 +17,63 @@ type options struct {
 	silent bool
 }
 
-type node struct {
+type responseWriterWrap struct {
+	http.ResponseWriter
+	r   *http.Request
 	dir string
+	hit bool
 }
 
-func (n *node) assetsHandler(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, filepath.Join(n.dir, "assets", r.URL.Path[7:]))
+func newResponseWriterWrap(w http.ResponseWriter, r *http.Request, dir string) *responseWriterWrap {
+	return &responseWriterWrap{
+		ResponseWriter: w,
+		r:              r,
+		dir:            dir,
+	}
 }
 
-func (n *node) iconHandler(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, filepath.Join(n.dir, "assets", "ico"+r.URL.Path))
-}
-
-func (n *node) htmlHandler(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, filepath.Join("html", r.URL.Path))
-}
-
-func (n *node) indexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" || r.URL.Path == "" {
-		http.ServeFile(w, r, filepath.Join(n.dir, "html", "index.html"))
+func (w *responseWriterWrap) WriteHeader(code int) {
+	if code == http.StatusNotFound {
+		w.hit = true
 		return
 	}
 
-	if len(r.URL.Path) >= 5 {
-		sfx := r.URL.Path[len(r.URL.Path)-5:]
+	w.ResponseWriter.WriteHeader(code)
+}
 
-		if sfx == ".html" || sfx[1:] == ".htm" {
-			n.htmlHandler(w, r)
-			return
-		}
-
-		if sfx[1:] == ".ico" {
-			n.iconHandler(w, r)
-			return
-		}
+func (w *responseWriterWrap) Write(b []byte) (int, error) {
+	if !w.hit {
+		return w.ResponseWriter.Write(b)
 	}
 
-	http.ServeFile(w, r, filepath.Join(n.dir, "html", r.URL.Path, "index.html"))
+	f, err := os.Open(path.Join(w.dir, "index.html"))
+	if err != nil {
+		w.ResponseWriter.WriteHeader(http.StatusNotFound)
+		return w.ResponseWriter.Write([]byte("not found"))
+	}
+
+	st, err := f.Stat()
+	if err != nil {
+		w.ResponseWriter.WriteHeader(http.StatusNotFound)
+		return w.ResponseWriter.Write([]byte("not found"))
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "text/html")
+	http.ServeContent(w.ResponseWriter, w.r, f.Name(), st.ModTime(), f)
+
+	return int(st.Size()), nil
+}
+
+type node struct {
+	dir string
+	fs  http.Handler
+}
+
+func newNode(dir string) *node {
+	return &node{
+		dir: dir,
+		fs:  http.FileServer(http.Dir(dir)),
+	}
 }
 
 func (n *node) access(next http.Handler) http.Handler {
@@ -72,12 +91,30 @@ func (n *node) access(next http.Handler) http.Handler {
 	})
 }
 
+func (n *node) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rww := newResponseWriterWrap(w, r, n.dir)
+	n.fs.ServeHTTP(rww, r)
+}
+
 func main() {
 	opts := &options{}
-	flag.StringVar(&opts.dir, "dir", ".", "directory")
-	flag.StringVar(&opts.port, "port", ":4001", "http port")
-	flag.BoolVar(&opts.acs, "acs", false, "log access")
-	flag.BoolVar(&opts.silent, "s", false, "silent")
+
+	flag.StringVar(
+		&opts.dir, "dir", ".",
+		"directory",
+	)
+	flag.StringVar(
+		&opts.port, "port", ":4001",
+		"http port",
+	)
+	flag.BoolVar(
+		&opts.acs, "acs", false,
+		"log access",
+	)
+	flag.BoolVar(
+		&opts.silent, "s", false,
+		"silent",
+	)
 	flag.Parse()
 
 	absDir, err := filepath.Abs(opts.dir)
@@ -86,20 +123,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	n := &node{
-		dir: absDir,
-	}
+	n := newNode(absDir)
 
-	mOpts := &mixmux.Options{
-		NotFound: http.HandlerFunc(n.indexHandler),
-	}
-	m := mixmux.NewRouter(mOpts)
-
-	m.Get("/assets/*x", http.HandlerFunc(n.assetsHandler))
-
-	var h http.Handler = m
+	var h http.Handler = n
 	if opts.acs && !opts.silent {
-		h = n.access(h)
+		h = n.access(n)
 	}
 
 	if !opts.silent {
