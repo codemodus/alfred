@@ -10,40 +10,46 @@ import (
 
 // Alfred ...
 type Alfred struct {
-	dir string
 	fs  http.Handler
+	cnf *responseConfig
 }
 
 // New ...
 func New(dir string) *Alfred {
 	return &Alfred{
-		dir: dir,
-		fs:  http.FileServer(http.Dir(dir)),
+		fs: http.FileServer(http.Dir(dir)),
+		cnf: &responseConfig{
+			dir:      dir,
+			index:    "index.html",
+			notFound: []byte("not found"),
+		},
 	}
 }
 
-func (n *Alfred) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	rww := newResponseWriterWrap(w, r, n.dir)
+func (a *Alfred) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rww := newResponseWriterWrap(w, r, a.cnf)
 
-	n.fs.ServeHTTP(rww, r)
+	a.fs.ServeHTTP(rww, r)
+}
+
+type responseConfig struct {
+	dir      string
+	index    string
+	notFound []byte
 }
 
 type responseWriterWrap struct {
 	http.ResponseWriter
-	r     *http.Request
-	dir   string
-	hit   bool
-	index string
-	nfBs  []byte
+	r   *http.Request
+	cnf *responseConfig
+	hit bool
 }
 
-func newResponseWriterWrap(w http.ResponseWriter, r *http.Request, dir string) *responseWriterWrap {
+func newResponseWriterWrap(w http.ResponseWriter, r *http.Request, cnf *responseConfig) *responseWriterWrap {
 	return &responseWriterWrap{
 		ResponseWriter: w,
 		r:              r,
-		dir:            dir,
-		index:          "index.html",
-		nfBs:           []byte("not found"),
+		cnf:            cnf,
 	}
 }
 
@@ -61,16 +67,16 @@ func (w *responseWriterWrap) Write(b []byte) (int, error) {
 		return w.ResponseWriter.Write(b)
 	}
 
-	f, err := os.Open(path.Join(w.dir, w.index))
+	f, err := os.Open(path.Join(w.cnf.dir, w.cnf.index))
 	if err != nil {
 		w.ResponseWriter.WriteHeader(http.StatusNotFound)
-		return w.ResponseWriter.Write(w.nfBs)
+		return w.ResponseWriter.Write(w.cnf.notFound)
 	}
 
 	st, err := f.Stat()
 	if err != nil {
 		w.ResponseWriter.WriteHeader(http.StatusNotFound)
-		return w.ResponseWriter.Write(w.nfBs)
+		return w.ResponseWriter.Write(w.cnf.notFound)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "text/html")
