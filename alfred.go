@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"time"
+
+	"github.com/codemodus/rwap"
 )
 
 // Alfred ...
@@ -27,9 +29,9 @@ func New(dir string) *Alfred {
 }
 
 func (a *Alfred) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	rww := newResponseWriterWrap(w, r, a.cnf)
+	w = newResponseWriterWrap(w, r, a.cnf)
 
-	a.fs.ServeHTTP(rww, r)
+	a.fs.ServeHTTP(w, r)
 }
 
 type responseConfig struct {
@@ -97,11 +99,18 @@ func openFileWithStats(filename string) (*os.File, os.FileInfo, error) {
 func LogAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t := time.Now()
+		rw := rwap.New(w)
 
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(rw, r)
 
-		afmt := "%-7s\t%08.3f\t%s\n"
-		fmt.Printf(afmt, r.Method, floatDurSince(t), r.URL.Path)
+		var stts int
+		rstts := rw.Status()
+		if rstts > 0 {
+			stts = rstts
+		}
+
+		afmt := "%3d\t%-7s\t%08.3f\t%s\n"
+		fmt.Printf(afmt, stts, r.Method, floatDurSince(t), r.URL.Path)
 	})
 }
 
