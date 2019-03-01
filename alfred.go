@@ -100,8 +100,8 @@ func LogAccess(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 
-		afmt := "method: %s, path: %s, dur(ms): %f\n"
-		fmt.Printf(afmt, r.Method, r.URL.Path, floatDurSince(t))
+		afmt := "%-7s\t%08.3f\t%s\n"
+		fmt.Printf(afmt, r.Method, floatDurSince(t), r.URL.Path)
 	})
 }
 
