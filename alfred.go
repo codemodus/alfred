@@ -67,13 +67,7 @@ func (w *responseWriterWrap) Write(b []byte) (int, error) {
 		return w.ResponseWriter.Write(b)
 	}
 
-	f, err := os.Open(path.Join(w.cnf.dir, w.cnf.index))
-	if err != nil {
-		w.ResponseWriter.WriteHeader(http.StatusNotFound)
-		return w.ResponseWriter.Write(w.cnf.notFound)
-	}
-
-	st, err := f.Stat()
+	f, st, err := openFileWithStats(path.Join(w.cnf.dir, w.cnf.index))
 	if err != nil {
 		w.ResponseWriter.WriteHeader(http.StatusNotFound)
 		return w.ResponseWriter.Write(w.cnf.notFound)
@@ -85,6 +79,20 @@ func (w *responseWriterWrap) Write(b []byte) (int, error) {
 	return int(st.Size()), nil
 }
 
+func openFileWithStats(filename string) (*os.File, os.FileInfo, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	st, err := f.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return f, st, nil
+}
+
 // LogAccess ...
 func LogAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,9 +100,11 @@ func LogAccess(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 
-		dur := float64(time.Since(t).Nanoseconds()) / float64(1000000)
-
-		afmt := "req(method): %s, req(path): %s, dur(ms): %f\n"
-		fmt.Printf(afmt, r.Method, r.URL.Path, dur)
+		afmt := "method: %s, path: %s, dur(ms): %f\n"
+		fmt.Printf(afmt, r.Method, r.URL.Path, floatDurSince(t))
 	})
+}
+
+func floatDurSince(t time.Time) float64 {
+	return float64(time.Since(t).Nanoseconds()) / 1000000
 }
