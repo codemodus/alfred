@@ -56,7 +56,7 @@ func newResponseWriterWrap(w http.ResponseWriter, r *http.Request, cnf *response
 }
 
 func (w *responseWriterWrap) WriteHeader(code int) {
-	if code == http.StatusNotFound {
+	if code == http.StatusNotFound && path.Ext(w.r.URL.Path) == "" {
 		w.hit = true
 		return
 	}
